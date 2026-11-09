@@ -18,6 +18,8 @@ public class KmsGrant {
     private String keyArn;
     private String granteePrincipal;
     private String retiringPrincipal;
+    private String granteeServicePrincipal;
+    private String retiringServicePrincipal;
     private List<String> operations = new ArrayList<>();
     private Map<String, Object> constraints;
     private long creationDate;
@@ -46,6 +48,16 @@ public class KmsGrant {
 
     public String getRetiringPrincipal() { return retiringPrincipal; }
     public void setRetiringPrincipal(String retiringPrincipal) { this.retiringPrincipal = retiringPrincipal; }
+
+    public String getGranteeServicePrincipal() { return granteeServicePrincipal; }
+    public void setGranteeServicePrincipal(String granteeServicePrincipal) {
+        this.granteeServicePrincipal = granteeServicePrincipal;
+    }
+
+    public String getRetiringServicePrincipal() { return retiringServicePrincipal; }
+    public void setRetiringServicePrincipal(String retiringServicePrincipal) {
+        this.retiringServicePrincipal = retiringServicePrincipal;
+    }
 
     public List<String> getOperations() { return operations; }
     public void setOperations(List<String> operations) { this.operations = operations; }

@@ -411,6 +411,35 @@ public class KmsService implements ResourceProvider {
     private static final Set<String> GRANT_CONSTRAINT_MEMBERS =
             Set.of("EncryptionContextSubset", "EncryptionContextEquals", "SourceArn");
 
+    /** ServicePrincipalType pattern from the KMS model (kms/2014-11-01/service-2.json); 1 to 128 characters. */
+    private static final Pattern SERVICE_PRINCIPAL_PATTERN =
+            Pattern.compile("^([A-Za-z0-9\\-]+)\\.([A-Za-z0-9\\-]+)(\\.[A-Za-z0-9\\-]+)+$");
+
+    private static final int MAX_SERVICE_PRINCIPAL_LENGTH = 128;
+
+    /** Validates a GranteeServicePrincipal or RetiringServicePrincipal against the modeled ServicePrincipalType. */
+    private static void validateServicePrincipal(String member, String value) {
+        if (value == null) {
+            return;
+        }
+        String violation = null;
+        if (value.isEmpty()) {
+            violation = "Member must have length greater than or equal to 1";
+        } else if (value.length() > MAX_SERVICE_PRINCIPAL_LENGTH) {
+            violation = "Member must have length less than or equal to " + MAX_SERVICE_PRINCIPAL_LENGTH;
+        } else if (!SERVICE_PRINCIPAL_PATTERN.matcher(value).matches()) {
+            violation = "Member must satisfy regular expression pattern: " + SERVICE_PRINCIPAL_PATTERN.pattern();
+        }
+        if (violation != null) {
+            throw SmithyValidationErrors.validationException(
+                    "Value '" + value + "' at '" + member + "' failed to satisfy constraint: " + violation);
+        }
+    }
+
+    private static boolean present(String value) {
+        return value != null && !value.isBlank();
+    }
+
     /** Validates a CreateGrant Constraints map against the modeled GrantConstraints shape. */
     private void validateGrantConstraints(Map<String, Object> constraints) {
         if (constraints == null) {
@@ -466,11 +495,34 @@ public class KmsService implements ResourceProvider {
     public KmsGrant createGrant(String keyId, String granteePrincipal, List<String> operations,
                                 String retiringPrincipal, String name, Map<String, Object> constraints,
                                 String region) {
+        return createGrant(keyId, granteePrincipal, null, operations, retiringPrincipal, null, name,
+                constraints, region);
+    }
+
+    /**
+     * Creates a grant for an AWS principal (GranteePrincipal) or an AWS service principal
+     * (GranteeServicePrincipal), following the CreateGrant reference: "You must specify either
+     * GranteePrincipal or GranteeServicePrincipal, but not both", "You can specify either
+     * RetiringPrincipal or RetiringServicePrincipal, but not both", and "When you specify a
+     * GranteeServicePrincipal, you must also specify a SourceArn grant constraint. In addition, you
+     * must specify either a RetiringPrincipal or a RetiringServicePrincipal."
+     */
+    public KmsGrant createGrant(String keyId, String granteePrincipal, String granteeServicePrincipal,
+                                List<String> operations, String retiringPrincipal,
+                                String retiringServicePrincipal, String name, Map<String, Object> constraints,
+                                String region) {
         if (keyId == null || keyId.isBlank()) {
             throw new AwsException("ValidationException", "KeyId is required", 400);
         }
-        if (granteePrincipal == null || granteePrincipal.isBlank()) {
-            throw new AwsException("ValidationException", "GranteePrincipal is required", 400);
+        validateServicePrincipal("granteeServicePrincipal", granteeServicePrincipal);
+        validateServicePrincipal("retiringServicePrincipal", retiringServicePrincipal);
+        if (present(granteePrincipal) == (granteeServicePrincipal != null)) {
+            throw new AwsException("ValidationException",
+                    "You must specify either GranteePrincipal or GranteeServicePrincipal, but not both", 400);
+        }
+        if (retiringPrincipal != null && retiringServicePrincipal != null) {
+            throw new AwsException("ValidationException",
+                    "You can specify either RetiringPrincipal or RetiringServicePrincipal, but not both", 400);
         }
         if (operations == null || operations.isEmpty()) {
             throw new AwsException("ValidationException", "Operations is required", 400);
@@ -502,6 +554,18 @@ public class KmsService implements ResourceProvider {
             }
         }
         validateGrantConstraints(constraints);
+        if (granteeServicePrincipal != null) {
+            if (constraints == null || constraints.get("SourceArn") == null) {
+                throw new AwsException("ValidationException",
+                        "When you specify a GranteeServicePrincipal, you must also specify a SourceArn "
+                                + "grant constraint", 400);
+            }
+            if (retiringPrincipal == null && retiringServicePrincipal == null) {
+                throw new AwsException("ValidationException",
+                        "When you specify a GranteeServicePrincipal, you must also specify either a "
+                                + "RetiringPrincipal or a RetiringServicePrincipal", 400);
+            }
+        }
 
         KmsKey key = resolveKey(keyId, region);
         // An AWS managed key's policy allows kms:CreateGrant only through the service that owns
@@ -518,8 +582,10 @@ public class KmsService implements ResourceProvider {
         grant.setName(name);
         grant.setKeyId(key.getKeyId());
         grant.setKeyArn(key.getArn());
-        grant.setGranteePrincipal(granteePrincipal);
+        grant.setGranteePrincipal(present(granteePrincipal) ? granteePrincipal : null);
+        grant.setGranteeServicePrincipal(granteeServicePrincipal);
         grant.setRetiringPrincipal(retiringPrincipal);
+        grant.setRetiringServicePrincipal(retiringServicePrincipal);
         grant.setOperations(new ArrayList<>(operations));
         grant.setConstraints(constraints == null ? null : new HashMap<>(constraints));
 
@@ -533,9 +599,21 @@ public class KmsService implements ResourceProvider {
 
     public Map<String, Object> listGrants(String keyId, String region, String marker, Integer limit,
                                            String grantIdFilter, String granteePrincipalFilter) {
+        return listGrants(keyId, region, marker, limit, grantIdFilter, granteePrincipalFilter, null);
+    }
+
+    /** ListGrants: "You can specify either GranteePrincipal or GranteeServicePrincipal, but not both." */
+    public Map<String, Object> listGrants(String keyId, String region, String marker, Integer limit,
+                                           String grantIdFilter, String granteePrincipalFilter,
+                                           String granteeServicePrincipalFilter) {
         // Validate filter mutual exclusivity
         if (grantIdFilter != null && (grantIdFilter.length() > 128)) {
             throw new AwsException("ValidationException", "GrantId exceeds maximum length of 128", 400);
+        }
+        validateServicePrincipal("granteeServicePrincipal", granteeServicePrincipalFilter);
+        if (present(granteePrincipalFilter) && granteeServicePrincipalFilter != null) {
+            throw new AwsException("ValidationException",
+                    "You can specify either GranteePrincipal or GranteeServicePrincipal, but not both", 400);
         }
 
         KmsKey key = resolveKey(keyId, region);
@@ -548,6 +626,8 @@ public class KmsService implements ResourceProvider {
                         || grantIdFilter.equals(grant.getGrantId()))
                 .filter(grant -> granteePrincipalFilter == null || granteePrincipalFilter.isBlank()
                         || granteePrincipalFilter.equals(grant.getGranteePrincipal()))
+                .filter(grant -> granteeServicePrincipalFilter == null
+                        || granteeServicePrincipalFilter.equals(grant.getGranteeServicePrincipal()))
                 .sorted(Comparator.comparing(KmsGrant::getGrantId))
                 .toList();
 
@@ -556,14 +636,24 @@ public class KmsService implements ResourceProvider {
 
     public Map<String, Object> listRetirableGrants(String retiringPrincipal, String region,
                                                     String marker, Integer limit) {
-        if (retiringPrincipal == null || retiringPrincipal.isBlank()) {
-            throw new AwsException("ValidationException", "RetiringPrincipal is required", 400);
+        return listRetirableGrants(retiringPrincipal, null, region, marker, limit);
+    }
+
+    /** ListRetirableGrants: "You must specify either RetiringPrincipal or RetiringServicePrincipal, but not both." */
+    public Map<String, Object> listRetirableGrants(String retiringPrincipal, String retiringServicePrincipal,
+                                                    String region, String marker, Integer limit) {
+        validateServicePrincipal("retiringServicePrincipal", retiringServicePrincipal);
+        if (present(retiringPrincipal) == (retiringServicePrincipal != null)) {
+            throw new AwsException("ValidationException",
+                    "You must specify either RetiringPrincipal or RetiringServicePrincipal, but not both", 400);
         }
 
         String prefix = region + "::";
 
         List<KmsGrant> sortedGrants = grantStore.scan(k -> k.startsWith(prefix)).stream()
-                .filter(grant -> retiringPrincipal.equals(grant.getRetiringPrincipal()))
+                .filter(grant -> retiringServicePrincipal != null
+                        ? retiringServicePrincipal.equals(grant.getRetiringServicePrincipal())
+                        : retiringPrincipal.equals(grant.getRetiringPrincipal()))
                 .sorted(Comparator.comparing(KmsGrant::getGrantId))
                 .toList();
 
@@ -740,7 +830,12 @@ public class KmsService implements ResourceProvider {
         Map<String, Object> result = new HashMap<>();
         result.put("GrantId", grant.getGrantId());
         result.put("KeyId", grant.getKeyArn());
-        result.put("GranteePrincipal", grant.getGranteePrincipal());
+        if (grant.getGranteePrincipal() != null) {
+            result.put("GranteePrincipal", grant.getGranteePrincipal());
+        }
+        if (grant.getGranteeServicePrincipal() != null) {
+            result.put("GranteeServicePrincipal", grant.getGranteeServicePrincipal());
+        }
         result.put("Operations", grant.getOperations());
         result.put("CreationDate", grant.getCreationDate());
         if (grant.getName() != null) {
@@ -751,6 +846,9 @@ public class KmsService implements ResourceProvider {
         }
         if (grant.getRetiringPrincipal() != null) {
             result.put("RetiringPrincipal", grant.getRetiringPrincipal());
+        }
+        if (grant.getRetiringServicePrincipal() != null) {
+            result.put("RetiringServicePrincipal", grant.getRetiringServicePrincipal());
         }
         return result;
     }

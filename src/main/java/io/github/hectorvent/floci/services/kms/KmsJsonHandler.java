@@ -239,17 +239,21 @@ public class KmsJsonHandler {
         Integer limit = request.path("Limit").isMissingNode() ? null : request.path("Limit").asInt();
         String grantId = request.path("GrantId").isMissingNode() ? null : request.path("GrantId").asText(null);
         String granteePrincipal = request.path("GranteePrincipal").isMissingNode() ? null : request.path("GranteePrincipal").asText(null);
+        String granteeServicePrincipal = optionalText(request, "GranteeServicePrincipal");
 
-        Map<String, Object> result = service.listGrants(keyId, region, marker, limit, grantId, granteePrincipal);
+        Map<String, Object> result = service.listGrants(keyId, region, marker, limit, grantId, granteePrincipal,
+                granteeServicePrincipal);
         return grantListResponse(result);
     }
 
     private Response handleListRetirableGrants(JsonNode request, String region) {
         String retiringPrincipal = request.path("RetiringPrincipal").asText(null);
+        String retiringServicePrincipal = optionalText(request, "RetiringServicePrincipal");
         String marker = request.path("Marker").isMissingNode() ? null : request.path("Marker").asText(null);
         Integer limit = request.path("Limit").isMissingNode() ? null : request.path("Limit").asInt();
 
-        Map<String, Object> result = service.listRetirableGrants(retiringPrincipal, region, marker, limit);
+        Map<String, Object> result = service.listRetirableGrants(retiringPrincipal, retiringServicePrincipal,
+                region, marker, limit);
 
         return grantListResponse(result);
     }
@@ -263,7 +267,12 @@ public class KmsJsonHandler {
             ObjectNode entry = array.addObject();
             entry.put("GrantId", (String) grant.get("GrantId"));
             entry.put("KeyId", (String) grant.get("KeyId"));
-            entry.put("GranteePrincipal", (String) grant.get("GranteePrincipal"));
+            if (grant.get("GranteePrincipal") != null) {
+                entry.put("GranteePrincipal", (String) grant.get("GranteePrincipal"));
+            }
+            if (grant.get("GranteeServicePrincipal") != null) {
+                entry.put("GranteeServicePrincipal", (String) grant.get("GranteeServicePrincipal"));
+            }
             entry.put("CreationDate", ((Number) grant.get("CreationDate")).longValue());
             if (grant.get("Name") != null) {
                 entry.put("Name", (String) grant.get("Name"));
@@ -277,6 +286,9 @@ public class KmsJsonHandler {
             operationValues.forEach(operations::add);
             if (grant.get("RetiringPrincipal") != null) {
                 entry.put("RetiringPrincipal", (String) grant.get("RetiringPrincipal"));
+            }
+            if (grant.get("RetiringServicePrincipal") != null) {
+                entry.put("RetiringServicePrincipal", (String) grant.get("RetiringServicePrincipal"));
             }
         }
         response.put("Truncated", (boolean) result.get("Truncated"));
@@ -293,6 +305,8 @@ public class KmsJsonHandler {
         request.path("Operations").forEach(operation -> operations.add(operation.asText()));
         String retiringPrincipal = request.path("RetiringPrincipal").isMissingNode()
                 ? null : request.path("RetiringPrincipal").asText(null);
+        String granteeServicePrincipal = optionalText(request, "GranteeServicePrincipal");
+        String retiringServicePrincipal = optionalText(request, "RetiringServicePrincipal");
         String name = request.path("Name").isMissingNode() ? null : request.path("Name").asText(null);
         JsonNode constraintsNode = request.path("Constraints");
         if (!constraintsNode.isMissingNode() && !constraintsNode.isNull() && !constraintsNode.isObject()) {
@@ -304,12 +318,18 @@ public class KmsJsonHandler {
                 ? objectMapper.convertValue(constraintsNode, Map.class)
                 : null;
 
-        KmsGrant grant = service.createGrant(
-                keyId, granteePrincipal, operations, retiringPrincipal, name, constraints, region);
+        KmsGrant grant = service.createGrant(keyId, granteePrincipal, granteeServicePrincipal, operations,
+                retiringPrincipal, retiringServicePrincipal, name, constraints, region);
         ObjectNode response = objectMapper.createObjectNode();
         response.put("GrantId", grant.getGrantId());
         response.put("GrantToken", grant.getGrantToken());
         return Response.ok(response).build();
+    }
+
+    /** A string member, or null when the request leaves it out or sends JSON null. */
+    private static String optionalText(JsonNode request, String member) {
+        JsonNode value = request.path(member);
+        return value.isMissingNode() || value.isNull() ? null : value.asText();
     }
 
     private Response handleRevokeGrant(JsonNode request, String region) {

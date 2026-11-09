@@ -228,6 +228,14 @@ there.
 
 Grant lifecycle operations (`CreateGrant`, `ListGrants`, `ListRetirableGrants`, `RevokeGrant`, `RetireGrant`) are supported. However, grant lifecycle support **does not** imply grant-based authorization enforcement on cryptographic operations (`Encrypt`, `Decrypt`, `Sign`, `Verify`, `GenerateDataKey`, etc.). Grants are stored and queryable but are not evaluated during crypto operations.
 
+A grant can name an AWS service principal instead of an AWS principal, as in the CreateGrant reference:
+- `GranteeServicePrincipal` takes the place of `GranteePrincipal`. A request names exactly one of the two.
+- A `GranteeServicePrincipal` grant also needs a `SourceArn` grant constraint, plus either a `RetiringPrincipal` or a `RetiringServicePrincipal`.
+- `RetiringPrincipal` and `RetiringServicePrincipal` exclude each other.
+- Both service principal members follow the modeled `ServicePrincipalType`: 1 to 128 characters matching `^([A-Za-z0-9\-]+)\.([A-Za-z0-9\-]+)(\.[A-Za-z0-9\-]+)+$`.
+
+`ListGrants` returns `GranteeServicePrincipal` and `RetiringServicePrincipal`, and filters on `GranteeServicePrincipal`. It accepts either `GranteePrincipal` or `GranteeServicePrincipal`, not both. `ListRetirableGrants` filters on either `RetiringPrincipal` or `RetiringServicePrincipal`, and requires exactly one of them. AWS documents both service principal filters as "only usable by callers in a service principal". Floci has no service principal callers, so it accepts them from any caller. Like every grant, a `SourceArn` constraint is stored and listed but not evaluated.
+
 ## IAM Enforcement
 
 With `FLOCI_SERVICES_IAM_ENFORCEMENT_ENABLED=true`, an operation that names a key is evaluated against that key's ARN, as on AWS. A `KeyId` given as a key id, an alias name, an alias ARN or a key ARN resolves to the key it names, so a policy scoped to one key ARN allows that key and no other, and a `Deny` scoped to one fires for that key. A `Decrypt` that names no `KeyId` is evaluated against the key that encrypted its `CiphertextBlob`.
