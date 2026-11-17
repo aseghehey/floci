@@ -395,16 +395,40 @@ public class ContainerLifecycleManager implements ContainerTeardown {
             return createCmd.exec().getId();
         } catch (ConflictException e) {
             if (spec.name() != null) {
-                Optional<Container> existing = findByName(spec.name());
-                if (existing.isPresent() && matchesSpec(existing.get(), spec, createAttemptId)) {
+                Optional<String> own = ownContainerNamed(spec.name(), spec, createAttemptId);
+                if (own.isPresent()) {
                     LOG.infov("Create for {0} hit a name conflict; an earlier attempt's response "
                             + "was lost but the container exists, adopting {1}",
-                            spec.name(), existing.get().getId());
-                    return existing.get().getId();
+                            spec.name(), own.get());
+                    return own.get();
                 }
             }
             throw e;
         }
+    }
+
+    /**
+     * The id of this call's own container under {@code name}, found by inspecting the name itself.
+     *
+     * <p>A lost create response comes from a stalled daemon, the same stall that makes listing every
+     * container slow or fail. Inspecting the one name is a single read the transport replays like any
+     * other, so it still answers while the daemon recovers. A failed inspect is logged, not swallowed,
+     * because the conflict that follows leaves this call's container behind.
+     */
+    private Optional<String> ownContainerNamed(String name, ContainerSpec spec, String createAttemptId) {
+        InspectContainerResponse inspect;
+        try {
+            inspect = dockerClient.inspectContainerCmd(name).exec();
+        } catch (NotFoundException e) {
+            return Optional.empty();
+        } catch (RuntimeException e) {
+            LOG.warnv("Create for {0} hit a name conflict, and inspecting that name failed: {1}",
+                    name, e.getMessage());
+            return Optional.empty();
+        }
+        ContainerConfig containerConfig = inspect.getConfig();
+        Map<String, String> labels = containerConfig == null ? null : containerConfig.getLabels();
+        return matchesSpec(labels, spec, createAttemptId) ? Optional.ofNullable(inspect.getId()) : Optional.empty();
     }
 
     /**
@@ -507,16 +531,15 @@ public class ContainerLifecycleManager implements ContainerTeardown {
      * one part of the label set a different concurrent call could never coincidentally reproduce,
      * and on its own sufficient proof of ownership.
      *
-     * <p>Deliberately does NOT compare the image. The list API reports {@code getImage()} as an
-     * image ID/digest rather than the tag once that tag has been re-pulled, retagged, or removed, so
+     * <p>Deliberately does NOT compare the image. Docker reports a container's image as an image
+     * ID/digest rather than the tag once that tag has been re-pulled, retagged, or removed, so
      * a tag comparison would reject this call's own container and leak it untracked, the failure
      * this recovery exists to prevent, arising precisely under the daemon churn that makes a lost
      * create response likely. The attempt-id match already excludes every foreign container.
      */
-    private boolean matchesSpec(Container existing, ContainerSpec spec, String createAttemptId) {
+    private boolean matchesSpec(Map<String, String> actualLabels, ContainerSpec spec, String createAttemptId) {
         Map<String, String> expectedLabels = mergedLabels(spec.labels());
         expectedLabels.put(CREATE_ATTEMPT_LABEL, createAttemptId);
-        Map<String, String> actualLabels = existing.getLabels();
         return actualLabels != null && actualLabels.entrySet().containsAll(expectedLabels.entrySet());
     }
 

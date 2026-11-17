@@ -2,9 +2,13 @@ package io.github.hectorvent.floci.core.common.docker;
 
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.command.CreateContainerCmd;
+import com.github.dockerjava.api.command.InspectContainerCmd;
+import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.command.ListContainersCmd;
 import com.github.dockerjava.api.exception.ConflictException;
+import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Container;
+import com.github.dockerjava.api.model.ContainerConfig;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.services.lambda.launcher.ImageCacheService;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +22,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -78,13 +83,14 @@ class ContainerLifecycleManagerCreateConflictRecoveryTest {
         when(createCmd.exec()).thenThrow(new ConflictException("named container already exists"));
 
         Container existing = mock(Container.class);
-        when(existing.getId()).thenReturn("winning-container-id");
-        when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
-        when(existing.getLabels()).thenAnswer(inv -> labelsCaptor.getValue());
+        lenient().when(existing.getId()).thenReturn("winning-container-id");
+        lenient().when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
+        lenient().when(existing.getLabels()).thenAnswer(inv -> labelsCaptor.getValue());
 
         ListContainersCmd listCmd = mock(ListContainersCmd.class, RETURNS_SELF);
-        when(dockerClient.listContainersCmd()).thenReturn(listCmd);
-        when(listCmd.exec()).thenReturn(List.of(existing));
+        lenient().when(dockerClient.listContainersCmd()).thenReturn(listCmd);
+        lenient().when(listCmd.exec()).thenReturn(List.of(existing));
+        inspectReturns("winning-container-id", () -> labelsCaptor.getValue());
 
         ContainerSpec spec = new ContainerSpec(
                 "busybox:stable", "emulator-fixed-name", List.of(), null, null, null, Map.of(),
@@ -113,18 +119,19 @@ class ContainerLifecycleManagerCreateConflictRecoveryTest {
         when(createCmd.exec()).thenThrow(new ConflictException("named container already exists"));
 
         Container existing = mock(Container.class);
-        when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
+        lenient().when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
         // Same image and default/spec labels as this call would apply, but a different
         // create() invocation's attempt id, simulating a genuinely concurrent racing caller,
         // not this call's own lost-response retry.
         Map<String, String> foreignLabels = new HashMap<>(
                 Map.of("floci", "true", "floci_emulator", "floci-aws"));
         foreignLabels.put(ContainerLifecycleManager.CREATE_ATTEMPT_LABEL, "some-other-callers-attempt-id");
-        when(existing.getLabels()).thenReturn(foreignLabels);
+        lenient().when(existing.getLabels()).thenReturn(foreignLabels);
 
         ListContainersCmd listCmd = mock(ListContainersCmd.class, RETURNS_SELF);
-        when(dockerClient.listContainersCmd()).thenReturn(listCmd);
-        when(listCmd.exec()).thenReturn(List.of(existing));
+        lenient().when(dockerClient.listContainersCmd()).thenReturn(listCmd);
+        lenient().when(listCmd.exec()).thenReturn(List.of(existing));
+        inspectReturns("foreign-container-id", () -> foreignLabels);
 
         ContainerSpec spec = new ContainerSpec(
                 "busybox:stable", "emulator-fixed-name", List.of(), null, null, null, Map.of(),
@@ -155,17 +162,18 @@ class ContainerLifecycleManagerCreateConflictRecoveryTest {
         when(createCmd.exec()).thenThrow(new ConflictException("named container already exists"));
 
         Container existing = mock(Container.class);
-        when(existing.getId()).thenReturn("winning-container-id");
-        when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
+        lenient().when(existing.getId()).thenReturn("winning-container-id");
+        lenient().when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
         // lenient: matchesSpec must NOT read the image at all. Stubbing it anyway is the regression
         // guard, reintroduce a tag comparison and this digest makes the adoption fail.
         lenient().when(existing.getImage()).thenReturn(
                 "sha256:1f2e3d4c5b6a798877665544332211009988776655443322110099887766554433");
-        when(existing.getLabels()).thenAnswer(inv -> labelsCaptor.getValue());
+        lenient().when(existing.getLabels()).thenAnswer(inv -> labelsCaptor.getValue());
 
         ListContainersCmd listCmd = mock(ListContainersCmd.class, RETURNS_SELF);
-        when(dockerClient.listContainersCmd()).thenReturn(listCmd);
-        when(listCmd.exec()).thenReturn(List.of(existing));
+        lenient().when(dockerClient.listContainersCmd()).thenReturn(listCmd);
+        lenient().when(listCmd.exec()).thenReturn(List.of(existing));
+        inspectReturns("winning-container-id", () -> labelsCaptor.getValue());
 
         ContainerSpec spec = new ContainerSpec(
                 "busybox:stable", "emulator-fixed-name", List.of(), null, null, null, Map.of(),
@@ -182,13 +190,14 @@ class ContainerLifecycleManagerCreateConflictRecoveryTest {
         when(createCmd.exec()).thenThrow(new ConflictException("named container already exists"));
 
         Container existing = mock(Container.class);
-        when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
-        when(existing.getLabels()).thenReturn(
+        lenient().when(existing.getNames()).thenReturn(new String[] {"/emulator-fixed-name"});
+        lenient().when(existing.getLabels()).thenReturn(
                 Map.of("floci", "true", "floci_emulator", "floci-lambda"));
 
         ListContainersCmd listCmd = mock(ListContainersCmd.class, RETURNS_SELF);
-        when(dockerClient.listContainersCmd()).thenReturn(listCmd);
-        when(listCmd.exec()).thenReturn(List.of(existing));
+        lenient().when(dockerClient.listContainersCmd()).thenReturn(listCmd);
+        lenient().when(listCmd.exec()).thenReturn(List.of(existing));
+        inspectReturns("other-container-id", () -> Map.of("floci", "true", "floci_emulator", "floci-lambda"));
 
         ContainerSpec spec = new ContainerSpec(
                 "busybox:stable", "emulator-fixed-name", List.of(), null, null, null, Map.of(),
@@ -205,8 +214,9 @@ class ContainerLifecycleManagerCreateConflictRecoveryTest {
         when(createCmd.exec()).thenThrow(new ConflictException("named container already exists"));
 
         ListContainersCmd listCmd = mock(ListContainersCmd.class, RETURNS_SELF);
-        when(dockerClient.listContainersCmd()).thenReturn(listCmd);
-        when(listCmd.exec()).thenReturn(List.of());
+        lenient().when(dockerClient.listContainersCmd()).thenReturn(listCmd);
+        lenient().when(listCmd.exec()).thenReturn(List.of());
+        inspectNotFound();
 
         ContainerSpec spec = new ContainerSpec(
                 "busybox:stable", "emulator-fixed-name", List.of(), null, null, null, Map.of(),
@@ -214,6 +224,72 @@ class ContainerLifecycleManagerCreateConflictRecoveryTest {
                 List.of(), null, null, List.of());
 
         assertThrows(ConflictException.class, () -> manager().create(spec));
+    }
+
+    /**
+     * A daemon stalled for minutes (overlay unmounts that sync the whole filesystem) gives a named
+     * create no answer within the API timeout, the transport replays it, and the replay hits 409 on
+     * this call's own container. Listing every container fails in that same stall, so a recovery that
+     * depends on the list rethrows the conflict and leaks the container. Inspecting the one name
+     * still answers, and must be enough to adopt it.
+     */
+    @Test
+    void createAdoptsOwnContainerWhenListingContainersFailsDuringADaemonStall() {
+        CreateContainerCmd createCmd = mock(CreateContainerCmd.class, RETURNS_SELF);
+        when(dockerClient.createContainerCmd("busybox:stable")).thenReturn(createCmd);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> labelsCaptor =
+                ArgumentCaptor.forClass(Map.class);
+        when(createCmd.withLabels(labelsCaptor.capture())).thenReturn(createCmd);
+        when(createCmd.exec()).thenThrow(new ConflictException("named container already exists"));
+
+        ListContainersCmd listCmd = mock(ListContainersCmd.class, RETURNS_SELF);
+        lenient().when(dockerClient.listContainersCmd()).thenReturn(listCmd);
+        lenient().when(listCmd.exec()).thenThrow(new RuntimeException("java.net.SocketTimeoutException: Read timed out"));
+        inspectReturns("own-container-id", () -> labelsCaptor.getValue());
+
+        assertEquals("own-container-id", manager().create(namedSpec()));
+    }
+
+    /** A name the daemon cannot inspect gives no proof of ownership, so the conflict stands. */
+    @Test
+    void createRethrowsConflictWhenTheConflictingNameCannotBeInspected() {
+        CreateContainerCmd createCmd = mock(CreateContainerCmd.class, RETURNS_SELF);
+        when(dockerClient.createContainerCmd("busybox:stable")).thenReturn(createCmd);
+        when(createCmd.exec()).thenThrow(new ConflictException("named container already exists"));
+
+        ListContainersCmd listCmd = mock(ListContainersCmd.class, RETURNS_SELF);
+        lenient().when(dockerClient.listContainersCmd()).thenReturn(listCmd);
+        lenient().when(listCmd.exec()).thenThrow(new RuntimeException("java.net.SocketTimeoutException: Read timed out"));
+        InspectContainerCmd inspectCmd = mock(InspectContainerCmd.class);
+        lenient().when(dockerClient.inspectContainerCmd("emulator-fixed-name")).thenReturn(inspectCmd);
+        lenient().when(inspectCmd.exec()).thenThrow(new RuntimeException("java.net.SocketTimeoutException: Read timed out"));
+
+        assertThrows(ConflictException.class, () -> manager().create(namedSpec()));
+    }
+
+    private void inspectReturns(String id, Supplier<Map<String, String>> labels) {
+        InspectContainerCmd inspectCmd = mock(InspectContainerCmd.class);
+        InspectContainerResponse response = mock(InspectContainerResponse.class);
+        ContainerConfig containerConfig = mock(ContainerConfig.class);
+        lenient().when(dockerClient.inspectContainerCmd("emulator-fixed-name")).thenReturn(inspectCmd);
+        lenient().when(inspectCmd.exec()).thenReturn(response);
+        lenient().when(response.getId()).thenReturn(id);
+        lenient().when(response.getConfig()).thenReturn(containerConfig);
+        lenient().when(containerConfig.getLabels()).thenAnswer(inv -> labels.get());
+    }
+
+    private void inspectNotFound() {
+        InspectContainerCmd inspectCmd = mock(InspectContainerCmd.class);
+        lenient().when(dockerClient.inspectContainerCmd("emulator-fixed-name")).thenReturn(inspectCmd);
+        lenient().when(inspectCmd.exec()).thenThrow(new NotFoundException("No such container"));
+    }
+
+    private static ContainerSpec namedSpec() {
+        return new ContainerSpec(
+                "busybox:stable", "emulator-fixed-name", List.of(), null, null, null, Map.of(),
+                List.of(), null, List.of(), List.of(), List.of(), Map.of(), null, false, null,
+                List.of(), null, null, List.of());
     }
 
     private ContainerLifecycleManager manager() {
